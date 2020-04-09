@@ -1,0 +1,4 @@
+database:
+    driver: sqlite3
+    connection: coupon.db
+serviceName: coupon-api
