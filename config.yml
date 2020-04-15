@@ -1,4 +1,7 @@
 database:
     driver: sqlite3
     connection: coupon.db
+queue:
+    broker: redis://127.0.0.1:6381
+    defaultqueue: coupon_tasks
 serviceName: coupon-api

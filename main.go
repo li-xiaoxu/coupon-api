@@ -2,13 +2,15 @@ package main
 
 import (
 	"hublabs/coupon-api/config"
+	"hublabs/coupon-api/controllers"
 	"hublabs/coupon-api/factory"
 	"hublabs/coupon-api/models"
 	"net/http"
-	"omni/utils/auth"
 	"os"
 	"runtime"
 	"time"
+
+	"github.com/hublabs/common/auth"
 
 	"github.com/go-xorm/xorm"
 	"github.com/labstack/echo"
@@ -24,6 +26,7 @@ func main() {
 	defer db.Close()
 
 	factory.Init(db)
+	// queue.Init(db)
 
 	e := echo.New()
 	r := echoswagger.New(e, "/doc", &echoswagger.Info{
@@ -32,7 +35,13 @@ func main() {
 		Version:     "1.0.0",
 	})
 
-	r.AddSecurityAPIKey("JWT", "JWT Token", echoswagger.SecurityInHeader)
+	r.AddSecurityAPIKey("Authorization", "JWT Token", echoswagger.SecurityInHeader)
+
+	controllers.CouponCampaignController{}.Init(r.Group("CouponCamapign", "/v1/coupon-camapigns"))
+	controllers.PrepareCouponController{}.Init(r.Group("PrepareCoupon", "/v1/prepare-coupons"))
+	controllers.CouponController{}.Init(r.Group("Coupons", "/v1/coupons"))
+	controllers.CouponInfoController{}.Init(r.Group("CouponInfos", "/v1/coupon-infos"))
+	controllers.ExportController{}.Init(r.Group("Export", "/v1/exports"))
 
 	e.GET("/ping", func(c echo.Context) error {
 		return c.String(http.StatusOK, "pong")

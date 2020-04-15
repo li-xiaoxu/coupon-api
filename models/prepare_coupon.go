@@ -2,8 +2,12 @@ package models
 
 import (
 	"context"
+	"errors"
 	"hublabs/coupon-api/factory"
+	"strconv"
 	"time"
+
+	"github.com/renstrom/shortuuid"
 )
 
 type SendType string
@@ -35,9 +39,8 @@ const (
 	PeriodTypeBirthMonth PeriodType = "birthMonth" //生日当月
 )
 
-//TODO:CustomerCondition结构
 type PrepareCoupon struct {
-	Id                 int64               `json:"id" xorm:"pk"`
+	Id                 int64               `json:"id"`
 	CampaignId         int64               `json:"campaignId"`
 	OfferId            int64               `json:"offerId"`
 	CustomerConditions []CustomerCondition `json:"customerConditions"`
@@ -48,9 +51,10 @@ type PrepareCoupon struct {
 	CouponPeriod       CouponPeriod        `json:"couponPeriod" xorm:"json"`
 	MaxPerQty          int64               `json:"maxPerQty"`
 	MaxQty             int64               `json:"maxQty"`
+	ReceivedInfo       ReceivedInfo        `json:"receivedInfo" xorm:"-"`
 	Percentage         float64             `json:"percentage"`
 	SendType           SendType            `json:"sendType"`
-	SendCondition      string              `json:"sendCondition" xorm:"json"`
+	SendCondition      SendCondition       `json:"sendCondition" xorm:"json"`
 	PurchaseConditions []PurchaseCondition `json:"purchaseConditions" xorm:"-"`
 	SmsContent         string              `json:"smsContent"`
 	Alert              Alert               `json:"alter" xorm:"json"`
@@ -67,13 +71,18 @@ type CouponPeriod struct {
 }
 
 type SendCondition struct {
-	SendTime time.Timer `json:"sendTime,omitempty"` //定时发放的时间
-	Period   int64      `json:"period,omitempty"`   //周期发放的周期
+	SendTime time.Time `json:"sendTime,omitempty"` //定时发放的时间
+	Period   int64     `json:"period,omitempty"`   //周期发放的周期
 }
 
 type Alert struct {
 	SmsAlert    bool `json:"smsAlert"`
 	WechatAlert bool `json:"wechatAlert"`
+}
+
+type ReceivedInfo struct {
+	Qty     int64 `json:"qty"`
+	CustQty int64 `json:"custQty"`
 }
 
 func (p *PrepareCoupon) Create(ctx context.Context) error {
@@ -115,7 +124,7 @@ func (p *PrepareCoupon) Create(ctx context.Context) error {
 
 func (PrepareCoupon) Get(ctx context.Context, id int64) (*PrepareCoupon, error) {
 	var pc PrepareCoupon
-	if _, err := factory.DB(ctx).ID(id).Get(pc); err != nil {
+	if _, err := factory.DB(ctx).ID(id).Get(&pc); err != nil {
 		return nil, err
 	}
 	pcs, err := PrepareCoupon{}.getRelatedInfos(ctx, pc)
@@ -127,7 +136,7 @@ func (PrepareCoupon) Get(ctx context.Context, id int64) (*PrepareCoupon, error) 
 
 func (PrepareCoupon) getByCampaignIds(ctx context.Context, campaignIds ...int64) ([]PrepareCoupon, error) {
 	var pcs []PrepareCoupon
-	if err := factory.DB(ctx).In("campaign_id", campaignIds).Find(pcs); err != nil {
+	if err := factory.DB(ctx).In("campaign_id", campaignIds).Find(&pcs); err != nil {
 		return nil, err
 	}
 
@@ -165,6 +174,7 @@ func (PrepareCoupon) getRelatedInfos(ctx context.Context, pcs ...PrepareCoupon) 
 	}
 
 	for i := range pcs {
+		pcs[i].CustomerConditions = nil
 		for _, cc := range ccs {
 			if pcs[i].Id == cc.PrepareCouponId {
 				pcs[i].CustomerConditions = append(pcs[i].CustomerConditions, cc)
@@ -184,4 +194,126 @@ func (PrepareCoupon) getRelatedInfos(ctx context.Context, pcs ...PrepareCoupon) 
 		}
 	}
 	return pcs, nil
+}
+
+func (PrepareCoupon) GetAll(ctx context.Context, q, enable, custId string, sendType, campaignStatus string, sortby, order []string, offset, limit int) (totalCount int64, items []PrepareCoupon, err error) {
+	query := factory.DB(ctx).Table("prepare_coupon").Select("prepare_coupon.*").
+		Join("INNER", "coupon_campaign", "prepare_coupon.campaign_id = coupon_campaign.id").
+		Where("? BETWEEN coupon_campaign.start_at AND coupon_campaign.end_at", time.Now()).
+		Where("prepare_coupon.max_qty = 0 OR (SELECT COUNT(1) FROM coupon WHERE prepare_coupon_id = prepare_coupon.id) < prepare_coupon.max_qty")
+	if getTenantCode(ctx) != "" {
+		query.Where("coupon_campaign.tenant_code = ?", getTenantCode(ctx))
+	}
+	if enable != "" {
+		b, _ := strconv.ParseBool(enable)
+		query.And("prepare_coupon.enable = ?", b)
+	}
+	if custId != "" {
+		cust := &Member{
+			Id: custId,
+		}
+		ids, err := CustomerCondition{}.FilterPrepareCoupon(ctx, cust)
+		if err != nil {
+			return 0, nil, err
+		}
+		if len(ids) != 0 {
+			query.In("prepare_coupon.id", ids)
+		}
+		query.Where("(SELECT COUNT(1) FROM coupon WHERE prepare_coupon_id = prepare_coupon.id AND cust_id = ?) < prepare_coupon.max_per_qty", custId)
+	}
+	if sendType != "" {
+		query.Where("prepare_coupon.send_type = ?", sendType)
+	}
+	if campaignStatus != "" {
+		query.Where("coupon_campaign.status = ?", string(campaignStatus))
+	}
+
+	if err = setSortOrder(query, sortby, order, "prepare_coupon"); err != nil {
+		return
+	}
+	if limit != -1 {
+		query.Limit(limit, offset)
+	}
+	totalCount, err = query.FindAndCount(&items)
+	if len(items) == 0 {
+		return
+	}
+
+	items, err = PrepareCoupon{}.getRelatedInfos(ctx, items...)
+
+	// items, err = PrepareCoupon{}.getCouponCount(ctx, custId, items...)
+	return
+}
+
+func (p *PrepareCoupon) Update(ctx context.Context) error {
+	_, err := factory.DB(ctx).ID(p.Id).AllCols().Update(p)
+	return err
+}
+
+func (p CouponPeriod) GetCouponPeriod(date time.Time) CouponPeriod {
+	switch p.Type {
+	case PeriodTypeDay:
+		p.StartAt = date
+		p.EndAt = date.AddDate(0, 0, p.Count)
+		break
+	case PeriodTypeMonth:
+		p.StartAt = GetFirstDateOfMonth(date)
+		p.EndAt = GetLastDateOfMonth(date)
+		break
+	case PeriodTypeBirthDay:
+		p.StartAt = GetZeroTime(date)
+		p.EndAt = GetLastTime(date)
+		break
+	case PeriodTypeBirthMonth:
+		p.StartAt = GetFirstDateOfMonth(date)
+		p.EndAt = GetLastDateOfMonth(date)
+		break
+	}
+	return p
+}
+
+func FindPrepareCoupon(list []PrepareCoupon) (int, error) {
+	var (
+		percentages []float64
+		num         float64
+	)
+	for _, pc := range list {
+		if pc.MaxQty > 0 && pc.ReceivedInfo.Qty >= pc.MaxQty {
+			pc.Percentage = 0
+		}
+		num += pc.Percentage
+		percentages = append(percentages, pc.Percentage)
+	}
+	if num == 0 {
+		return 0, errors.New("More than total maximum limit")
+	}
+	//生成一个随机数
+	rd := random(num)
+	//判断随机数在哪个批次内
+	index := findIndex(rd, percentages)
+	if index == -1 {
+		return 0, errors.New("prepareCoupon not exist")
+	}
+	return index, nil
+}
+
+func CreateFreeCoupon(ctx context.Context, pc PrepareCoupon) error {
+	couponList := make([]Coupon, pc.MaxQty)
+	p := pc.CouponPeriod.GetCouponPeriod(time.Now())
+	for i := range couponList {
+		couponList[i] = Coupon{
+			CouponNo:        shortuuid.New(),
+			PrepareCouponId: pc.Id,
+			OfferId:         pc.OfferId,
+			CouponInfo:      pc.CouponInfo,
+			CustId:          "",
+			StartAt:         p.StartAt,
+			EndAt:           p.EndAt,
+			Status:          CouponStatusNormal,
+		}
+	}
+	if err := (Coupon{}).CreateInArray(ctx, couponList); err != nil {
+		return err
+	}
+	return nil
 }

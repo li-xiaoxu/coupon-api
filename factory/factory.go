@@ -32,3 +32,18 @@ func DB(ctx context.Context) xorm.Interface {
 	}
 	panic("DB is not exist")
 }
+
+func DBNewSession(ctx context.Context) xorm.Interface {
+	if db == nil {
+		panic("DB is not exist")
+	}
+	session := db.NewSession()
+	func(session interface{}, ctx context.Context) {
+		if s, ok := session.(interface {
+			SetContext(context.Context)
+		}); ok {
+			s.SetContext(ctx)
+		}
+	}(session, ctx)
+	return session
+}

@@ -40,6 +40,10 @@ type C struct {
 			Kafka echomiddleware.KafkaConfig
 		}
 	}
+	Queue struct {
+		Broker       string
+		DefaultQueue string
+	}
 	BehaviorLog struct {
 		Kafka echomiddleware.KafkaConfig
 	}

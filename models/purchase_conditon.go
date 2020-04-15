@@ -11,7 +11,7 @@ type TargetType string
 const (
 	PurchaseTypePrice  PurchaseType = "price"
 	PurchaseTypeQty    PurchaseType = "qty"
-	PurchaseTypeAll    PurchaseType = "all"
+	PurchaseTypeBoth   PurchaseType = "both"
 	PurchaseTypeEither PurchaseType = "either"
 )
 
@@ -58,7 +58,7 @@ func (c *PurchaseCondition) Create(ctx context.Context) error {
 
 func (PurchaseCondition) getByPrepareCouponIds(ctx context.Context, ids ...int64) ([]PurchaseCondition, error) {
 	var conditions []PurchaseCondition
-	if err := factory.DB(ctx).In("prepare_coupon_id", ids).Find(conditions); err != nil {
+	if err := factory.DB(ctx).In("prepare_coupon_id", ids).Find(&conditions); err != nil {
 		return nil, err
 	}
 
@@ -93,7 +93,7 @@ func (p *PurchaseProduct) create(ctx context.Context) error {
 
 func (PurchaseProduct) getByPrepareCouponIds(ctx context.Context, ids ...int64) ([]PurchaseProduct, error) {
 	var products []PurchaseProduct
-	if err := factory.DB(ctx).In("prepare_coupon_id", ids).Find(products); err != nil {
+	if err := factory.DB(ctx).In("prepare_coupon_id", ids).Find(&products); err != nil {
 		return nil, err
 	}
 
@@ -119,7 +119,7 @@ func (t *PurchaseTarget) create(ctx context.Context) error {
 
 func (PurchaseTarget) getByPrepareCouponIds(ctx context.Context, ids ...int64) ([]PurchaseTarget, error) {
 	var targets []PurchaseTarget
-	if err := factory.DB(ctx).In("prepare_coupon_id", ids).Find(targets); err != nil {
+	if err := factory.DB(ctx).In("prepare_coupon_id", ids).Find(&targets); err != nil {
 		return nil, err
 	}
 	return targets, nil
